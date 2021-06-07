@@ -19,7 +19,7 @@ Run experiment with
 Code adapted from "Marek Rei and Anders Søgaard. Jointly learning to label sentences and tokens. AAAI 2019", for binary classification of words and sentences with a single type of attention from the words/entities.
 
 
-If you find this code or our work useful, please cite this paper:
+If you find this code or the original work useful, please cite this paper:
 
 @inproceedings{wunnava2020dual,
   title={A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events},
