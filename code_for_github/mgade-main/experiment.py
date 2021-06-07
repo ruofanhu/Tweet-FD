@@ -17,7 +17,7 @@ except:
 from model import MLTModel
 from evaluator import MLTEvaluator, MyEvaluator
 
-NOTE = 'V0.0.1: initial version for mgade code'
+NOTE = 'V1.0.0: Initial Version for mgade code'
 
 
 def read_input_files(file_paths, max_sentence_length=-1):
