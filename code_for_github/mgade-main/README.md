@@ -1,5 +1,5 @@
 # mgade
-The original code is for "A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events", Findings of EMNLP, 2020. In this work, we use and adapt the code for evaluation. The code we have edited are evaluator.py, experiment.py, and model.py.
+The original code is for "A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events", Findings of EMNLP, 2020. In our work, we use and adapt this code for evaluation. The code we have edited are evaluator.py, experiment.py, and model.py. Original code is available at [mgade](https://github.com/swunnava20/mgade)
 
 Run experiment with 
 ```cmd
