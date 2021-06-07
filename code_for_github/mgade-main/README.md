@@ -1,5 +1,5 @@
 # mgade
-Code for "A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events", Findings of EMNLP, 2020.
+The original code is for "A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events", Findings of EMNLP, 2020. In this work, we use and adapt the code for evaluation.
 
 Data format
 -------------------------
@@ -16,14 +16,10 @@ Run experiment with
 
     python experiment.py config_file.conf
 
-Print output from a saved model with
-
-    python print_output.py saved_model_path.model
-
 Code adapted from "Marek Rei and Anders Søgaard. Jointly learning to label sentences and tokens. AAAI 2019", for binary classification of words and sentences with a single type of attention from the words/entities.
 
 
-If you find this code or our work useful, please cite our paper:
+If you find this code or our work useful, please cite this paper:
 
 @inproceedings{wunnava2020dual,
   title={A Dual-Attention Network for Joint Named Entity Recognition and Sentence Classification of Adverse Drug Events},
