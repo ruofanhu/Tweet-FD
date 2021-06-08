@@ -1,0 +1,8 @@
+B-food
+I-food
+B-symptom
+I-symptom
+B-loc
+I-loc
+B-other
+I-other
