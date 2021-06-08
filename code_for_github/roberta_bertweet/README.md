@@ -33,7 +33,7 @@ python main_token.py \
 python main_multi.py \
    --seed 2021 \
    --bert_model [roberta-base|vinai/bertweet-base] \
-   --model_type [bertweet-multi-crf|bertweet-multi] \
+   --model_type [bertweet-multi|bertweet-multi-crf] \
    --task_type [entity_detection|entity_relevance_classification|relevant_entity_detection] \
    --data /tweet-fd \
    --data_file tweet_fd.p \
