@@ -275,25 +275,6 @@ def predict(model, test_batch_generator, num_batches, device, args, label_map, s
            epoch_results_by_tag, epoch_se_results_by_tag, output_t_pred, output_se_pred, epoch_CR, epoch_se_CR
 
 
-def write_performance(val_acc, P, R, F, CR, filename, args, log_filename, note):
-    val_seed = args.seed
-    val_lr = args.learning_rate
-    val_time = str(datetime.datetime.now())
-    header = "Seed,Learning_rate,Time,Accuracy,P,R,F,CR,Log_filename,Dataset,Note"
-    if args.test_file is not None:
-        dataset = 'test'
-    else:
-        dataset = 'val'
-    content = f"{val_seed},{val_lr},{val_time},{val_acc},{P},{R},{F},{CR},{log_filename},{dataset},{note}"
-
-    if os.path.exists(filename):
-        with open(filename, 'a') as f:
-            f.write(content + "\n")
-    else:
-        with open(filename, 'w') as f:
-            f.write(header + "\n")
-            f.write(content + "\n")
-
 
 def load_model(model_type, model_path, config):
     if model_type == 'bertweet-two-token':
@@ -431,7 +412,7 @@ def main():
         se_class_weight = torch.FloatTensor(se_class_weight)
 
     config = RobertaConfig.from_pretrained(args.bert_model)
-    config.update({'num_labels': len(labels), 'num_se_labels': len(se_labels), 'rnn_hidden_size': args.rnn_hidden_size})
+    config.update({'num_labels': len(labels), 'num_se_labels': len(se_labels), })
     model = load_model(args.model_type, args.bert_model, config)
 
     if n_gpu > 1:
@@ -692,7 +673,6 @@ def main():
     se_pred_dir = log_directory + 'se_prediction.npy'
     np.save(token_pred_dir, test_t_pred)
     np.save(se_pred_dir, test_se_pred)
-    write_performance(test_acc, test_P, test_R, test_F, test_CR, perfilename, args, log_filename, NOTE)
     performance_dict['T_best_test_F'] = test_F
     performance_dict['T_best_test_ACC'] = test_acc
     performance_dict['T_best_test_R'] = test_R
