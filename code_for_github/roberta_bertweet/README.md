@@ -46,7 +46,7 @@ python main_multi.py \
 ```
 ### Train EMD+ERC model
 ```linux
-python modified/main_two_token.py \
+python main_two_token.py \
    --seed 2021 \
    --bert_model [roberta-base|vinai/bertweet-base] \
    --task_type 'entity_detection & entity_relevance_classification' \
