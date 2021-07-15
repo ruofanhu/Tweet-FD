@@ -428,11 +428,34 @@ def read_txtfile_tolist(filepath):
     return all_text, all_labels
 
 
-def extract_from_dataframe(dataframe, columns, index):
+def extract_from_dataframe(dataframe, columns):
     return_list = []
     for col in columns:
-        return_list.append(dataframe[col].loc[index].to_numpy())
+        return_list.append(dataframe[col].to_numpy())
     return return_list
+
+
+def new_build_glove_embedding(embedding_path= 'embeddings/glove.840B.300d.txt' ):
+    '''
+    PAD_INDEX: 2196016
+    UNK_INDEX: 2196017
+    '''
+    embeddings_index = dict()
+    embeddings = []
+    with open(embedding_path) as f:
+        for idx, line in enumerate(f):
+            values = line.split(' ')
+            word = values[0]
+            coefs = np.asarray(values[1:], dtype='float32')
+            embeddings.append(coefs)
+            embeddings_index[word] = idx
+    embeddings = np.array(embeddings)
+    pad = np.zeros(shape=(1, embeddings.shape[1]))
+    unk = np.random.uniform(-0.25, 0.25, size=(1, embeddings.shape[1]))
+    embeddings = np.concatenate((embeddings, pad, unk), axis=0)
+    return embeddings_index, embeddings
+
+
 
 
 if __name__ == "__main__":

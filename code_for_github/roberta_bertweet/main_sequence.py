@@ -106,7 +106,10 @@ def train(model, optimizer, train_batch_generator, num_batches, device, class_we
     # Training
     for b in tqdm(range(num_batches)):
         x_batch, y_batch, masks_batch = next(train_batch_generator)
-        x_batch = Variable(torch.LongTensor(x_batch)).to(device)
+        if len(x_batch.shape) == 3:
+            x_batch = Variable(torch.FloatTensor(x_batch)).to(device)
+        else:
+            x_batch = Variable(torch.LongTensor(x_batch)).to(device)
         y_batch = y_batch.astype(np.float)
         y_batch = Variable(torch.LongTensor(y_batch)).to(device)
         masks_batch = Variable(torch.FloatTensor(masks_batch)).to(device)
@@ -149,7 +152,10 @@ def evaluate(model, test_batch_generator, num_batches, device, class_weight):
     with torch.no_grad():
         for b in tqdm(range(num_batches)):
             x_batch, y_batch, masks_batch = next(test_batch_generator)
-            x_batch = Variable(torch.LongTensor(x_batch)).to(device)
+            if len(x_batch.shape) == 3:
+                x_batch = Variable(torch.FloatTensor(x_batch)).to(device)
+            else:
+                x_batch = Variable(torch.LongTensor(x_batch)).to(device)
             y_batch = y_batch.astype(np.float)
             y_batch = Variable(torch.LongTensor(y_batch)).to(device)
             masks_batch = Variable(torch.FloatTensor(masks_batch)).to(device)
@@ -208,6 +214,10 @@ def single_evaluate(model, x_item, y_item, mask_item, device):
 def load_model(model_type, model_path, config):
     if model_type == 'bertweet-seq':
         model = RobertaForWeightedSequenceClassification.from_pretrained(model_path, config=config)
+    elif model_type == 'BiLSTM-seq':
+        model = BiLSTMForWeightedSequenceClassification(config=config)
+        if model_path is not None:
+            model.load_state_dict(torch.load(os.path.join(model_path, 'pytorch_model.pt')))
     else:
         model = None
     return model
@@ -247,14 +257,40 @@ def get_partial_labeled_data(X_train, Y_train, masks_train, args):
            X_train_multi, Y_train_multi, masks_train_multi,
 
 
+def get_embedding(text_list, embeddings_index, embeddings, max_length):
+    output_embedding = []
+    attention_masks_list = []
+    for words in text_list:
+        words_mapped = [0] * max_length
+        attention_mask = [1] * max_length
+        length = len(words)
+        if (length < max_length):
+            for i in range(0, length):
+                words_mapped[i] = embeddings_index.get(words[i], -1)
+            for i in range(length, max_length):
+                words_mapped[i] = -2
+                attention_mask[i] = 0
+        elif (length > max_words):
+            print('We should never see this print either')
+        else:
+            for i in range(0, max_length):
+                words_mapped[i] = embeddings_index.get(words[i], -1)
+
+        output_embedding.append(np.array([embeddings[ix] for ix in words_mapped]))
+        attention_masks_list.append(attention_mask)
+    output_embedding = np.array(output_embedding)
+    attention_masks_list = np.array(attention_masks_list)
+    return output_embedding, attention_masks_list
+
+
 NOTE = 'V1.0.0: Initial Public Version'
 
 
 ### Main
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bert_model", default="vinai/bertweet-base", type=str)
-    parser.add_argument("--model_type", default='bertweet-seq', type=str)
+    parser.add_argument("--bert_model", default=None, type=str)
+    parser.add_argument("--model_type", default=None, type=str)
     parser.add_argument('--n_epochs', default=30, type=int)
     parser.add_argument('--max_length', default=128, type=int)
     parser.add_argument('--rnn_hidden_size', default=384, type=int)
@@ -268,14 +304,16 @@ def main():
     parser.add_argument("--save_model", default=False, action='store_true')
     parser.add_argument("--early_stop", default=False, action='store_true')
     parser.add_argument("--assign_weight", default=False, action='store_true')
-    parser.add_argument("--data_file", default=None, type=str)
+    parser.add_argument("--train_file", default=None, type=str)
+    parser.add_argument("--val_file", default=None, type=str)
+    parser.add_argument("--test_file", default=None, type=str)
+    parser.add_argument("--performance_file", default='all_test_performance.txt', type=str)
+    parser.add_argument("--embeddings_file", default='glove.840B.300d.txt', type=str)
 
     args = parser.parse_args()
 
-
-    assert args.model_type in ['bertweet-seq', 'bertweet-encoder-seq']
     print("cuda is available:", torch.cuda.is_available())
-    log_directory = args.log_dir + '/' + args.bert_model.split('/')[-1] + '/' + args.model_type + '/' \
+    log_directory = args.log_dir + '/' + str(args.bert_model).split('/')[-1] + '/' + args.model_type + '/' \
                     + str(args.n_epochs) + '_epoch/' + args.data.split('/')[-1] + '/' + \
                     str(args.assign_weight) + '_weight/' + str(args.seed) + '_seed/'
     log_filename = 'log.' + str(datetime.datetime.now()).replace(' ', '--').replace(':', '-').replace('.', '-') + '.txt'
@@ -285,7 +323,6 @@ def main():
         os.makedirs(log_directory)
     logname = log_directory + log_filename
     modeldir = log_directory + model_dir
-    perfilename = log_directory + per_filename
 
     logging.basicConfig(filename=logname,
                         filemode='a',
@@ -311,13 +348,13 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
 
 
-    all_data = pd.read_pickle(os.path.join(args.data, args.data_file))
-    train_index, val_test_index = train_test_split(all_data.index, test_size=0.2, random_state=args.seed)
-    val_index, test_index = train_test_split(val_test_index, test_size=0.5, random_state=args.seed)
+    train_data = pd.read_pickle(os.path.join(args.data, args.train_file))
+    val_data = pd.read_pickle(os.path.join(args.data, args.val_file))
+    test_data = pd.read_pickle(os.path.join(args.data, args.test_file))
     need_columns = ['tweet_tokens', 'sentence_class']
-    X_train_raw, Y_train = extract_from_dataframe(all_data, need_columns, train_index)
-    X_dev_raw, Y_dev = extract_from_dataframe(all_data, need_columns, val_index)
-    X_test_raw, Y_test = extract_from_dataframe(all_data, need_columns, test_index)
+    X_train_raw, Y_train = extract_from_dataframe(train_data, need_columns)
+    X_dev_raw, Y_dev = extract_from_dataframe(val_data, need_columns)
+    X_test_raw, Y_test = extract_from_dataframe(test_data, need_columns)
     args.eval_batch_size = Y_dev.shape[0]
     args.test_batch_size = Y_test.shape[0]
 
@@ -325,15 +362,20 @@ def main():
     logging.info(args)
     print(args)
 
-
-    tokenizer = AutoTokenizer.from_pretrained(args.bert_model, normalization=True)
-
-
-    X_train, masks_train = tokenize_with_new_mask(
-        X_train_raw, args.max_length, tokenizer)
-
-    X_dev, masks_dev = tokenize_with_new_mask(
-        X_dev_raw, args.max_length, tokenizer)
+    if args.bert_model is not None:
+        tokenizer = AutoTokenizer.from_pretrained(args.bert_model, normalization=True)
+        X_train, masks_train = tokenize_with_new_mask(
+            X_train_raw, args.max_length, tokenizer)
+        X_dev, masks_dev = tokenize_with_new_mask(
+            X_dev_raw, args.max_length, tokenizer)
+        X_test, masks_test = tokenize_with_new_mask(
+            X_test_raw, args.max_length, tokenizer)
+    else:
+        embeddings_index, embeddings = new_build_glove_embedding(
+            embedding_path=args.embeddings_file)
+        X_train, masks_train = get_embedding(X_train_raw, embeddings_index, embeddings, args.max_length)
+        X_dev, masks_dev = get_embedding(X_dev_raw, embeddings_index, embeddings, args.max_length)
+        X_test, masks_test = get_embedding(X_test_raw, embeddings_index, embeddings, args.max_length)
 
     # weight of each class in loss function
     class_weight = None
@@ -341,8 +383,15 @@ def main():
         class_weight = [np.array(Y_train).shape[0] / (np.array(Y_train) == i).sum() for i in range(len(set(Y_train)))]
         class_weight = torch.FloatTensor(class_weight)
 
-    config = RobertaConfig.from_pretrained(args.bert_model)
-    config.update({'num_labels': len(set(Y_train)), 'rnn_hidden_size': args.rnn_hidden_size})
+    if args.bert_model is not None:
+        config = RobertaConfig.from_pretrained(args.bert_model)
+        config.update({'num_labels': len(set(Y_train))})
+    else:
+        from dotmap import DotMap
+        config = DotMap()
+        config.update({'num_labels': len(set(Y_train)),
+                       'rnn_hidden_dimension': args.rnn_hidden_size,
+                       'hidden_dropout_prob': 0.1})
     model = load_model(args.model_type, args.bert_model, config)
 
     if n_gpu > 1:
@@ -407,7 +456,10 @@ def main():
             best_train_fn = train_fn
             best_train_tp = train_tp
 
-            model.save_pretrained(modeldir)
+            if args.bert_model is not None:
+                model.save_pretrained(modeldir)
+            else:
+                torch.save(model.state_dict(), os.path.join(modeldir, 'pytorch_model.pt'))
             if args.early_stop:
                 early_stop_sign = 0
         elif args.early_stop:
@@ -461,8 +513,7 @@ def main():
     figfullname = log_directory + figure_filename
     plt.savefig(figfullname, dpi=fig.dpi)
 
-    X_test, masks_test = tokenize_with_new_mask(
-        X_test_raw, args.max_length, tokenizer)
+
     num_batches = X_test.shape[0] // args.test_batch_size
     test_batch_generator = mask_batch_seq_generator(X_test, Y_test, masks_test, args.test_batch_size)
 
@@ -497,7 +548,7 @@ def main():
     for key, value in performance_dict.items():
         if type(value) is np.int64:
             performance_dict[key] = int(value)
-    with open('all_test_performance.txt', 'a+') as outfile:
+    with open(args.performance_file, 'a+') as outfile:
         outfile.write(json.dumps(performance_dict) + '\n')
     if not args.save_model:
         shutil.rmtree(modeldir)

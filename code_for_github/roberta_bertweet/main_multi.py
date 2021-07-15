@@ -130,13 +130,15 @@ def train(model, optimizer, train_batch_generator, num_batches, device, args, la
     epoch_s_tn, epoch_s_fp, epoch_s_fn, epoch_s_tp = 0, 0, 0, 0
     epoch_t_CR = ""
 
-
     model.train()
 
     # Training
     for b in tqdm(range(num_batches)):
         x_batch, y_batch_l, t_batch_l, masks_batch = next(train_batch_generator)
-        x_batch = Variable(torch.LongTensor(x_batch)).to(device)
+        if len(x_batch.shape) == 3:
+            x_batch = Variable(torch.FloatTensor(x_batch)).to(device)
+        else:
+            x_batch = Variable(torch.LongTensor(x_batch)).to(device)
         y_batch_l = y_batch_l.astype(np.float)
         y_batch_l = torch.LongTensor(y_batch_l)
         y_batch = Variable(y_batch_l).to(device)
@@ -150,7 +152,7 @@ def train(model, optimizer, train_batch_generator, num_batches, device, args, la
         outputs = model(input_ids=x_batch, attention_mask=masks_batch,
                         seq_labels=y_batch, token_labels=t_batch,
                         token_class_weight=token_weight, seq_class_weight=y_weight,
-                        token_lambda=args.token_lambda,)
+                        token_lambda=args.token_lambda, )
 
         loss, token_logits, seq_logits = outputs[:3]
 
@@ -160,7 +162,7 @@ def train(model, optimizer, train_batch_generator, num_batches, device, args, la
         s_auc, s_acc, s_tn, s_fp, s_fn, s_tp = eval_metrics(seq_logits.detach().cpu(),
                                                             y_batch_l)
 
-        if type(model) is RobertaForTokenAndSequenceClassificationWithCRF:
+        if type(model) in [RobertaForTokenAndSequenceClassificationWithCRF, BiLSTMForWeightedTokenAndSequenceClassificationWithCRF]:
             t_batch_filtered = [t_batch_l[i][t_batch_l[i] >= 0].tolist() for i in range(t_batch_l.shape[0])]
             t_eval_metrics = compute_crf_metrics(outputs[3], t_batch_filtered, label_map)
         else:
@@ -206,7 +208,10 @@ def evaluate(model, test_batch_generator, num_batches, device, args, label_map, 
     with torch.no_grad():
         for b in tqdm(range(num_batches)):
             x_batch, y_batch, t_batch, masks_batch = next(test_batch_generator)
-            x_batch = Variable(torch.LongTensor(x_batch)).to(device)
+            if len(x_batch.shape) == 3:
+                x_batch = Variable(torch.FloatTensor(x_batch)).to(device)
+            else:
+                x_batch = Variable(torch.LongTensor(x_batch)).to(device)
             y_batch = y_batch.astype(np.float)
             y_batch = Variable(torch.LongTensor(y_batch)).to(device)
             t_batch = t_batch.astype(np.float)
@@ -225,7 +230,7 @@ def evaluate(model, test_batch_generator, num_batches, device, args, label_map, 
             s_auc, s_acc, s_tn, s_fp, s_fn, s_tp = eval_metrics(seq_logits.detach().cpu(),
                                                                 y_batch.detach().cpu())
 
-            if type(model) is RobertaForTokenAndSequenceClassificationWithCRF:
+            if type(model) in [RobertaForTokenAndSequenceClassificationWithCRF, BiLSTMForWeightedTokenAndSequenceClassificationWithCRF]:
                 t_batch_l = t_batch.detach().cpu()
                 t_batch_filtered = [t_batch_l[i][t_batch_l[i] >= 0].tolist() for i in range(t_batch_l.shape[0])]
                 t_eval_metrics = compute_crf_metrics(outputs[3], t_batch_filtered, label_map)
@@ -265,11 +270,49 @@ def load_model(model_type, model_path, config):
         model = RobertaForTokenAndSequenceClassification.from_pretrained(model_path, config=config)
     elif model_type == 'bertweet-multi-crf':
         model = RobertaForTokenAndSequenceClassificationWithCRF.from_pretrained(model_path, config=config)
+    elif model_type == 'BiLSTM-multi':
+        model = BiLSTMForWeightedTokenAndSequenceClassification(config=config)
+        if model_path is not None:
+            model.load_state_dict(torch.load(os.path.join(model_path, 'pytorch_model.pt')))
+    elif model_type == 'BiLSTM-multi-crf':
+        model = BiLSTMForWeightedTokenAndSequenceClassificationWithCRF(config=config)
+        if model_path is not None:
+            model.load_state_dict(torch.load(os.path.join(model_path, 'pytorch_model.pt')))
     else:
         model = None
     return model
 
 
+def get_embedding(text_list, embeddings_index, embeddings, max_length, token_label_raw_list, label_map):
+    pad_token_label_id = -100
+    output_embedding = []
+    label_ids_list = []
+    attention_masks_list = []
+    for words, token_labels in zip(text_list, token_label_raw_list):
+        words_mapped = [0] * max_length
+        label_ids = [0] * max_length
+        length = len(words)
+        if (length < max_length):
+            for i in range(0, length):
+                words_mapped[i] = embeddings_index.get(words[i], -1)
+                label_ids[i] = label_map[token_labels[i]]
+            for i in range(length, max_length):
+                words_mapped[i] = -2
+                label_ids[i] = pad_token_label_id
+        elif (length > max_words):
+            print('We should never see this print either')
+        else:
+            for i in range(0, max_length):
+                words_mapped[i] = embeddings_index.get(words[i], -1)
+                label_ids[i] = label_map[token_labels[i]]
+
+        output_embedding.append(np.array([embeddings[ix] for ix in words_mapped]))
+        label_ids_list.append(label_ids)
+        attention_masks_list.append([float(i >= 0) for i in label_ids])
+    output_embedding = np.array(output_embedding)
+    attention_masks_list = np.array(attention_masks_list)
+    label_ids_list = np.array(label_ids_list)
+    return output_embedding, attention_masks_list, label_ids_list
 
 
 NOTE = 'V1.0.0: Initial Public Version'
@@ -278,8 +321,8 @@ NOTE = 'V1.0.0: Initial Public Version'
 ### Main
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bert_model", default="vinai/bertweet-base", type=str)
-    parser.add_argument("--model_type", default='bertweet-encoder', type=str)
+    parser.add_argument("--bert_model", default=None, type=str)
+    parser.add_argument("--model_type", default=None, type=str)
     parser.add_argument("--task_type", default='entity_detection', type=str)
     parser.add_argument('--n_epochs', default=30, type=int)
     parser.add_argument('--max_length', default=128, type=int)
@@ -296,18 +339,20 @@ def main():
     parser.add_argument("--assign_token_weight", default=False, action='store_true')
     parser.add_argument("--assign_seq_weight", default=False, action='store_true')
     parser.add_argument('--token_lambda', default=10, type=float)
-    parser.add_argument("--data_file", default=None, type=str)
+    parser.add_argument("--train_file", default=None, type=str)
+    parser.add_argument("--val_file", default=None, type=str)
+    parser.add_argument("--test_file", default=None, type=str)
     parser.add_argument("--label_map", default=None, type=str)
     parser.add_argument("--performance_file", default='all_test_performance.txt', type=str)
+    parser.add_argument("--embeddings_file", default='glove.840B.300d.txt', type=str)
 
     args = parser.parse_args()
 
-    assert args.model_type.startswith('bertweet')
     assert args.task_type in ['entity_detection', 'relevant_entity_detection', 'entity_relevance_classification']
 
     print("cuda is available:", torch.cuda.is_available())
 
-    log_directory = args.log_dir + '/' + args.bert_model.split('/')[-1] + '/' + args.model_type + '/' + \
+    log_directory = args.log_dir + '/' + str(args.bert_model).split('/')[-1] + '/' + args.model_type + '/' + \
                     args.task_type + '/' + str(args.n_epochs) + \
                     '_epoch/' + args.data.split('/')[-1] + '/' + str(args.assign_token_weight) + \
                     '_token_weight/' + str(args.assign_seq_weight) + '_seq_weight/' + str(args.token_lambda) + \
@@ -342,10 +387,9 @@ def main():
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-
-    all_data = pd.read_pickle(os.path.join(args.data, args.data_file))
-    train_index, val_test_index = train_test_split(all_data.index, test_size=0.2, random_state=args.seed)
-    val_index, test_index = train_test_split(val_test_index, test_size=0.5, random_state=args.seed)
+    train_data = pd.read_pickle(os.path.join(args.data, args.train_file))
+    val_data = pd.read_pickle(os.path.join(args.data, args.val_file))
+    test_data = pd.read_pickle(os.path.join(args.data, args.test_file))
     need_columns = ['tweet_tokens']
     if args.task_type == 'entity_detection':
         need_columns.append('entity_label')
@@ -354,9 +398,9 @@ def main():
     elif args.task_type == 'entity_relevance_classification':
         need_columns.append('relevance_entity_class_label')
     need_columns.append('sentence_class')
-    X_train_raw, token_label_train_raw, Y_train = extract_from_dataframe(all_data, need_columns, train_index)
-    X_dev_raw, token_label_dev_raw, Y_dev = extract_from_dataframe(all_data, need_columns, val_index)
-    X_test_raw, token_label_test_raw, Y_test = extract_from_dataframe(all_data, need_columns, test_index)
+    X_train_raw, token_label_train_raw, Y_train = extract_from_dataframe(train_data, need_columns)
+    X_dev_raw, token_label_dev_raw, Y_dev = extract_from_dataframe(val_data, need_columns)
+    X_test_raw, token_label_test_raw, Y_test = extract_from_dataframe(test_data, need_columns)
     args.eval_batch_size = Y_dev.shape[0]
     args.test_batch_size = Y_test.shape[0]
 
@@ -368,14 +412,27 @@ def main():
     logging.info(args)
     print(args)
 
+    if args.bert_model is not None:
+        tokenizer = AutoTokenizer.from_pretrained(args.bert_model, normalization=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.bert_model, normalization=True)
-
-    X_train, masks_train, token_label_train = tokenize_with_new_mask(
-        X_train_raw, args.max_length, tokenizer, token_label_train_raw, label_map)
-    X_dev, masks_dev, token_label_dev = tokenize_with_new_mask(
-        X_dev_raw, args.max_length, tokenizer, token_label_dev_raw, label_map)
-
+        X_train, masks_train, token_label_train = tokenize_with_new_mask(
+            X_train_raw, args.max_length, tokenizer, token_label_train_raw, label_map)
+        X_dev, masks_dev, token_label_dev = tokenize_with_new_mask(
+            X_dev_raw, args.max_length, tokenizer, token_label_dev_raw, label_map)
+        X_test, masks_test, token_label_test = tokenize_with_new_mask(
+            X_test_raw, args.max_length, tokenizer, token_label_test_raw, label_map)
+    else:
+        embeddings_index, embeddings = new_build_glove_embedding(
+            embedding_path=args.embeddings_file)
+        X_train, masks_train, token_label_train = get_embedding(X_train_raw, embeddings_index, embeddings,
+                                                                args.max_length,
+                                                                token_label_train_raw, label_map)
+        X_dev, masks_dev, token_label_dev = get_embedding(X_dev_raw, embeddings_index, embeddings,
+                                                          args.max_length,
+                                                          token_label_dev_raw, label_map)
+        X_test, masks_test, token_label_test = get_embedding(X_test_raw, embeddings_index, embeddings,
+                                                             args.max_length,
+                                                             token_label_test_raw, label_map)
 
     # weight of each class in loss function
     token_weight = None
@@ -383,15 +440,22 @@ def main():
         token_weight = [token_label_train.shape[0] / (token_label_train == i).sum() for i in range(len(labels))]
         token_weight = torch.FloatTensor(token_weight)
 
-
     y_weight = None
     if args.assign_seq_weight:
         y_weight = [np.array(Y_train).shape[0] / (np.array(Y_train) == i).sum() for i in range(len(set(Y_train)))]
         y_weight = torch.FloatTensor(y_weight)
 
-    config = RobertaConfig.from_pretrained(args.bert_model)
-    config.update({'num_token_labels': len(labels), 'num_labels': len(set(Y_train)),
-                   'token_label_map': label_map,})
+    if args.bert_model is not None:
+        config = RobertaConfig.from_pretrained(args.bert_model)
+        config.update({'num_token_labels': len(labels), 'num_labels': len(set(Y_train)),
+                       'token_label_map': label_map, })
+    else:
+        from dotmap import DotMap
+        config = DotMap()
+        config.update({'num_token_labels': len(labels), 'num_labels': len(set(Y_train)),
+                       'token_label_map': label_map, 'hidden_dropout_prob': 0.1,
+                       'rnn_hidden_dimension': args.rnn_hidden_size})
+
     model = load_model(args.model_type, args.bert_model, config)
 
     if n_gpu > 1:
@@ -461,7 +525,10 @@ def main():
             best_valid_s_tuple, best_valid_t_tuple = valid_s_tuple, valid_t_tuple
             best_train_t_tuple, best_train_s_tuple = train_t_tuple, train_s_tuple
 
-            model.save_pretrained(modeldir)
+            if args.bert_model is not None:
+                model.save_pretrained(modeldir)
+            else:
+                torch.save(model.state_dict(), os.path.join(modeldir, 'pytorch_model.pt'))
             if args.early_stop:
                 early_stop_sign = 0
         elif args.early_stop:
@@ -523,8 +590,6 @@ def main():
     figfullname = log_directory + figure_filename
     plt.savefig(figfullname, dpi=fig.dpi)
 
-    X_test, masks_test, token_label_test = tokenize_with_new_mask(
-        X_test_raw, args.max_length, tokenizer, token_label_test_raw, label_map)
     num_batches = X_test.shape[0] // args.test_batch_size
     test_batch_generator = multi_batch_seq_generator(X_test, Y_test, token_label_test, masks_test,
                                                      args.test_batch_size)
@@ -550,7 +615,6 @@ def main():
 
     performance_dict['T_best_test_ACC'], performance_dict['T_best_test_results'], \
     performance_dict['T_best_test_results_by_tag'], performance_dict['T_best_test_CR'] = test_t_tuple
-
 
     performance_dict['script_file'] = os.path.basename(__file__)
     performance_dict['log_directory'] = log_directory
