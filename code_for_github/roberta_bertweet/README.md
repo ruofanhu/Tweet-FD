@@ -1,5 +1,5 @@
-# RoBERTa and BERTweet
-Codes for training RoBERTa and BERTweet on TWEET-FD dataset.
+# RoBERTa, BERTweet, BiLSTM, and SVM
+Codes for training RoBERTa, BERTweet, BiLSTM, and SVM on TWEET-FD dataset.
 Below and default parameters in each code files are parameter settings that we used to train models in paper's experiment section.
 
 ## Usage
